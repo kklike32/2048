@@ -26,9 +26,9 @@ ENV/
 env/
 
 # Training artifacts
-models/
-*.h5
-training_history.png
+# models/
+# *.h5
+# training_history.png
 
 # IDE files
 .idea/
