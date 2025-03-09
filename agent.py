@@ -4,6 +4,7 @@ import torch.optim as optim
 import numpy as np
 import random
 from collections import deque
+import os
 
 class DQN(nn.Module):
     def __init__(self):
@@ -22,7 +23,7 @@ class DQN(nn.Module):
 class DQNAgent:
     def __init__(self, state_size=16, action_size=4, memory_size=100000, 
                  gamma=0.99, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995, 
-                 learning_rate=0.001, batch_size=64, device='cuda' if torch.cuda.is_available() else 'cpu'):
+                 learning_rate=0.001, batch_size=64, device=None):
         self.state_size = state_size
         self.action_size = action_size
         self.memory = deque(maxlen=memory_size)
@@ -32,11 +33,18 @@ class DQNAgent:
         self.epsilon_decay = epsilon_decay
         self.learning_rate = learning_rate
         self.batch_size = batch_size
-        self.device = device
+        
+        # Explicitly check for GPU
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = device
+            
+        print(f"Using device: {self.device}")
         
         # Q-Network and target network
-        self.model = DQN().to(device)
-        self.target_model = DQN().to(device)
+        self.model = DQN().to(self.device)
+        self.target_model = DQN().to(self.device)
         self.update_target_model()
         
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
@@ -114,10 +122,24 @@ class DQNAgent:
             target_q_values = rewards + (1 - dones) * self.gamma * max_next_q_values
         
         # Compute loss and update weights
-        loss = self.criterion(current_q_values, target_q_values)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        if hasattr(self, 'use_amp') and self.use_amp:
+            with torch.cuda.amp.autocast():
+                current_q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+                with torch.no_grad():
+                    max_next_q_values = self.target_model(next_states).max(1)[0]
+                    target_q_values = rewards + (1 - dones) * self.gamma * max_next_q_values
+                loss = self.criterion(current_q_values, target_q_values)
+                
+            self.optimizer.zero_grad()
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            # Regular training (existing code)
+            loss = self.criterion(current_q_values, target_q_values)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
         
         # Update target network
         self.steps += 1
@@ -130,14 +152,16 @@ class DQNAgent:
         
         return loss.item()
 
+
     def load(self, filename):
-        self.model.load_state_dict(torch.load(filename))
-        self.update_target_model()
+        if os.path.exists(filename):
+            self.model.load_state_dict(torch.load(filename, map_location=self.device))
+            self.update_target_model()
+            print(f"Model loaded from {filename}")
+        else:
+            print(f"No model found at {filename}")
         
     def save(self, filename):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
         torch.save(self.model.state_dict(), filename)
-
-    def decay_epsilon(self):
-        """Manually decay epsilon when called"""
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
+        print(f"Model saved to {filename}")

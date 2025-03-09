@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import gc
 import pygame
 import sys
 import os
@@ -11,6 +12,15 @@ from tqdm import tqdm
 
 # Map action indices to directions
 ACTIONS = ['up', 'down', 'left', 'right']
+
+def print_gpu_info():
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA Version: {torch.version.cuda}")
+        print(f"Memory allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+        print(f"Memory reserved: {torch.cuda.memory_reserved(0) / 1024**2:.2f} MB")
+    else:
+        print("No GPU available")
 
 def get_valid_moves(board):
     """Return indices of valid moves"""
@@ -38,7 +48,19 @@ def get_valid_moves(board):
 
 def train_agent(episodes=10000, render_every=500, save_every=1000, render=False):
     """Train the DQN agent to play 2048"""
-    agent = DQNAgent(state_size=16, action_size=4)
+    print_gpu_info()
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    agent = DQNAgent(state_size=16, action_size=4, batch_size=256, device=device)
+    
+    if torch.cuda.is_available():
+        # Use mixed precision if available (speeds up training on modern GPUs)
+        scaler = torch.cuda.amp.GradScaler()
+        use_amp = True
+        print("Using mixed precision training")
+    else:
+        use_amp = False
+    
     scores = []
     max_tiles = []
     
