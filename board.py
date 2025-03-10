@@ -74,14 +74,20 @@ class Board:
             board = np.array(board)
             
         board_copy = np.copy(board)
+        self._merge_count = 0  # Reset merge counter
         
         for i in range(4):
             for j in range(3):
                 if board_copy[i][j] == board_copy[i][j + 1] and board_copy[i][j] != 0:
                     board_copy[i][j] *= 2
                     board_copy[i][j + 1] = 0
-                    self.current_score += board_copy[i][j] 
+                    self.current_score += board_copy[i][j]
+                    self._merge_count += 1  # Count each merge
         return board_copy
+
+    def get_merge_count(self):
+        """Return the number of merges from the last move"""
+        return getattr(self, '_merge_count', 0)
 
     def reverse(self, board):
         """Reverse the board rows."""
@@ -179,5 +185,4 @@ class Board:
         
         if not np.array_equal(original_board, self.board):
             self.add_random_tile()
-            
-    
+

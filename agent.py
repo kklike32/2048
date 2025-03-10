@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import numpy as np
 import random
 from collections import deque
@@ -9,21 +10,46 @@ import os
 class DQN(nn.Module):
     def __init__(self):
         super(DQN, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(16, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 4)  # 4 actions: up, down, left, right
-        )
-    
+        # CNN layers to process the 4x4 board
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=2, stride=1, padding=0)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=2, stride=1, padding=0)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=2, stride=1, padding=0)
+        
+        # Fully connected layers
+        self.fc1 = nn.Linear(64, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 4)  # 4 actions: up, down, left, right
+        
+        # Regularization
+        self.dropout = nn.Dropout(0.2)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.bn2 = nn.BatchNorm2d(64)
+        
     def forward(self, x):
-        return self.network(x)
+        # Reshape input to 4x4 grid with 1 channel
+        x = x.view(-1, 1, 4, 4)
+        
+        # Convolutional layers
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.conv3(x))
+        
+        # Flatten
+        x = x.view(x.size(0), -1)
+        
+        # Fully connected layers
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = F.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = self.fc3(x)
+        
+        return x
 
 class DQNAgent:
     def __init__(self, state_size=16, action_size=4, memory_size=100000, 
-                 gamma=0.99, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995, 
-                 learning_rate=0.001, batch_size=64, device=None):
+                 gamma=0.99, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.9995, 
+                 learning_rate=0.0005, batch_size=256, device=None):
         self.state_size = state_size
         self.action_size = action_size
         self.memory = deque(maxlen=memory_size)
@@ -47,7 +73,8 @@ class DQNAgent:
         self.target_model = DQN().to(self.device)
         self.update_target_model()
         
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        # Use Adam with weight decay for regularization
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=1e-5)
         self.criterion = nn.MSELoss()
         
         self.steps = 0
@@ -56,29 +83,40 @@ class DQNAgent:
         # For statistics
         self.rewards_history = []
         self.loss_history = []
-
+        self.q_values_history = []
+    
+    # Add new method for episode-based epsilon decay
+    def decay_epsilon_once(self):
+        """Decay epsilon once per episode instead of every step"""
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
+    
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
     def preprocess_state(self, state):
         # Convert board state to the proper input format
-        # Apply log2 to the non-zero values to handle the exponential growth of tile values
         normalized_state = np.zeros(16, dtype=np.float32)
         for i, val in enumerate(state):
             if val > 0:
                 normalized_state[i] = np.log2(val)
             else:
                 normalized_state[i] = 0
+        
         # Scale to range [0, 1]
         if np.max(normalized_state) > 0:
-            normalized_state = normalized_state / 16.0  # Max possible value in 2048 is 2^16
-        return torch.FloatTensor(normalized_state).to(self.device)
+            normalized_state = normalized_state / 16.0
+        
+        # Reshape to 4x4 for CNN
+        board_tensor = torch.FloatTensor(normalized_state).to(self.device)
+        board_tensor = board_tensor.view(-1, 4, 4)
+        return board_tensor
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
 
     def act(self, state, valid_moves=None):
-        if valid_moves is None:
+        if valid_moves is None or len(valid_moves) == 0:
             valid_moves = [0, 1, 2, 3]  # All moves: up, down, left, right
             
         if np.random.rand() <= self.epsilon:
@@ -89,7 +127,7 @@ class DQNAgent:
         state_tensor = self.preprocess_state(state)
         self.model.eval()
         with torch.no_grad():
-            q_values = self.model(state_tensor).cpu().numpy()
+            q_values = self.model(state_tensor).cpu().numpy().flatten()
         
         # Filter out invalid moves by setting their Q-values very low
         for action in range(self.action_size):
@@ -147,8 +185,8 @@ class DQNAgent:
             self.update_target_model()
         
         # Decay epsilon
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
+        # if self.epsilon > self.epsilon_min:
+        #     self.epsilon *= self.epsilon_decay
         
         return loss.item()
 

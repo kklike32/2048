@@ -112,22 +112,72 @@ def train_agent(episodes=10000, render_every=500, save_every=1000, render=False)
             # Calculate reward based on score improvement and highest tile
             new_score = board.get_current_score()
             score_reward = new_score - old_score
-            
+
             # Additional reward for getting higher tiles
             new_max = np.max(board.board)
             if new_max > max_tile:
-                tile_reward = np.log2(new_max)
+                tile_reward = np.log2(new_max) * 2.0  # Increased weight
                 max_tile = new_max
             else:
                 tile_reward = 0
-                
-            # Penalty for not changing the board (should not happen with valid_moves)
-            unchanged_penalty = 0
-            if np.array_equal(old_board, board.board):
-                unchanged_penalty = -10
-                
-            # Total reward for this step
-            reward = score_reward + tile_reward + unchanged_penalty
+
+            # Corner strategy reward
+            corners = [(0, 0), (0, 3), (3, 0), (3, 3)]
+            corner_bonus = 0
+            for pos in corners:
+                if board.board[pos] == new_max:
+                    corner_bonus = np.log2(new_max) * 1.5
+                    break
+
+            # Extra bonus for reaching 2048 or higher
+            extra_bonus = 0
+            if new_max >= 2048:
+                extra_bonus = (np.log2(new_max) - 10) * 10  # Logarithmic scaling
+
+            # Merge-focused reward (count the number of merges)
+            merge_reward = 0
+            merge_count = board.get_merge_count() if hasattr(board, 'get_merge_count') else 0
+            if merge_count > 0:
+                merge_reward = merge_count * 2.0
+
+            # Monotonicity reward: encourage tiles to be ordered by value
+            monotonicity_reward = 0
+            # Check rows for monotonicity (decreasing from left to right)
+            for i in range(4):
+                row = board.board[i]
+                if row[0] >= row[1] >= row[2] >= row[3] and row[0] > 0:
+                    monotonicity_reward += 1.0
+                if row[3] >= row[2] >= row[1] >= row[0] and row[3] > 0:
+                    monotonicity_reward += 1.0
+
+            # Check columns for monotonicity (decreasing from top to bottom)
+            for j in range(4):
+                col = board.board[:, j]
+                if col[0] >= col[1] >= col[2] >= col[3] and col[0] > 0:
+                    monotonicity_reward += 1.0
+                if col[3] >= col[2] >= col[1] >= col[0] and col[3] > 0:
+                    monotonicity_reward += 1.0
+
+            # Reward for empty tiles (maintaining space)
+            empty_tiles = len(board.get_empty_tiles())
+            empty_tiles_reward = empty_tiles * 0.2  # Increased weight
+
+            # Small penalty per move to encourage efficiency
+            move_penalty = -0.05
+
+            # Combined reward (with scaling to prevent any single component from dominating)
+            reward = (score_reward * 0.5 + 
+                      tile_reward + 
+                      corner_bonus + 
+                      extra_bonus + 
+                      merge_reward +
+                      monotonicity_reward * 0.5 +
+                      empty_tiles_reward +
+                      move_penalty)
+
+            # Scale the reward to a reasonable range to prevent exploding gradients
+            reward = np.clip(reward, -20, 20)
+
             total_reward += reward
             
             # Get new state
@@ -150,6 +200,9 @@ def train_agent(episodes=10000, render_every=500, save_every=1000, render=False)
                 pygame.event.pump()  # Process PyGame events
                 # You would need to adapt the display code to show the AI game
         
+        # End of episode - add epsilon decay here
+        agent.decay_epsilon_once()
+        
         # End of episode
         scores.append(board.get_current_score())
         max_tiles.append(max_tile)
@@ -163,10 +216,10 @@ def train_agent(episodes=10000, render_every=500, save_every=1000, render=False)
         
         # Save model periodically
         if episode > 0 and episode % save_every == 0:
-            agent.save(f'models/dqn_2048_episode_{episode}.h5')
+            agent.save(f'models/dqn_localv2_2048_episode_{episode}.h5')
     
     # Save final model
-    agent.save('models/dqn_2048_final.h5')
+    agent.save('models/dqn_localv2_2048_final.h5')
     
     # Plot training results
     plt.figure(figsize=(12, 5))
