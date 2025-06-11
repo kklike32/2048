@@ -1,0 +1,20 @@
+<!-- Minimal front-end for 2048 web game -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>2048 Web</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<h1>2048 Web</h1>
+<div>
+<label for="model-select">Choose AI model:</label>
+<select id="model-select"></select>
+<button id="start-btn">Start Game</button>
+<button id="ai-btn" disabled>AI Move</button>
+</div>
+<div class="grid" id="board"></div>
+<script src="{{ url_for('static', filename='js/game.js') }}"></script>
+</body>
+</html>
